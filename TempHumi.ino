@@ -1,7 +1,5 @@
 #include <AirQuality.h>
-
 #include <Adafruit_Sensor.h>
-
 #include <DHT.h>
 #include <DHT_U.h>
 #include "Arduino.h"
@@ -33,20 +31,8 @@ void loop() {
   delay(2000);
 
   getDHTValues(); 
-
-  current_quality=airqualitysensor.slope();
-  
-    Serial.print("Air Quality: ");
-    Serial.print(current_quality);
-    Serial.print(" ");
-    if (current_quality==0)
-        Serial.println("Emergency   ");
-    else if (current_quality==1)
-        Serial.println("Hi Pollution");
-    else if (current_quality==2)
-        Serial.println("Lo Pollution");
-    else if (current_quality ==3)
-        Serial.println("Fresh air   ");
+  getAirQuality();
+  getDustDectector();
     
 }
 
@@ -76,6 +62,26 @@ void getDHTValues(){
   Serial.print(hic);
   Serial.println(" *C ");
 }  
+
+void getAirQuality(){
+    current_quality=airqualitysensor.slope();
+  
+    Serial.print("Air Quality: ");
+    Serial.print(current_quality);
+    Serial.print(" ");
+    if (current_quality==0)
+        Serial.println("Emergency   ");
+    else if (current_quality==1)
+        Serial.println("Hi Pollution");
+    else if (current_quality==2)
+        Serial.println("Lo Pollution");
+    else if (current_quality ==3)
+        Serial.println("Fresh air   ");
+}
+
+void getDustDectector(){
+  
+}
 
 ISR(TIMER2_OVF_vect)
 {
