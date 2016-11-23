@@ -26,6 +26,10 @@ unsigned long lowpulseoccupancy = 0;
 float ratio = 0;
 float concentration = 0;
 
+//LEDS
+#define red_led_pin 3
+#define yellow_led_pin 5 
+#define blue_led_pin 6  
 
 void setup() {
   Serial.begin(9600);
@@ -36,18 +40,23 @@ void setup() {
   //pinMode(sensorPin, INPUT);
 
   pinMode(dust_pin,INPUT);
+
+  pinMode(red_led_pin,OUTPUT);
+  pinMode(yellow_led_pin,OUTPUT);
+  pinMode(blue_led_pin,OUTPUT);
   starttime = millis();//get the current time;
   
 }
 
 void loop() {
     // Wait a few seconds between measurements.
+  resetLeds();  
   delay(2000);
 
   getDHTValues(); 
   getAirQuality();
   getDustDectector();
-    
+  
 }
 
 //Valeur du capteur de température et humidité.
@@ -83,14 +92,22 @@ void getAirQuality(){
     Serial.print("Air Quality: ");
     Serial.print(airqualitysensor.first_vol);
     Serial.print(" ");
-    if (current_quality==0)
-        Serial.println("Emergency   ");
-    else if (current_quality==1)
-        Serial.println("Hi Pollution");
-    else if (current_quality==2)
-        Serial.println("Lo Pollution");
-    else if (current_quality ==3)
-        Serial.println("Fresh air   ");
+    if (current_quality==0){
+      Serial.println("Emergency   ");
+      lightRedLed();
+    }
+    else if (current_quality==1){
+      Serial.println("Hi Pollution");
+      lightYellowLed();
+    }
+    else if (current_quality==2){
+      Serial.println("Lo Pollution");
+      lightBlueLed(); 
+    }
+    else if (current_quality ==3){
+      Serial.println("Fresh air   ");
+      lightBlueLed(); 
+    }
 }
 
 void getDustDectector(){
@@ -113,6 +130,30 @@ void getDustDectector(){
     lowpulseoccupancy = 0;
     starttime = millis();
   }
+}
+
+void resetLeds(){
+      digitalWrite(red_led_pin, LOW);  
+      digitalWrite(yellow_led_pin, LOW);  
+      digitalWrite(blue_led_pin, LOW);  
+}
+
+void lightRedLed(){
+      digitalWrite(red_led_pin, HIGH);  
+      digitalWrite(yellow_led_pin, LOW);  
+      digitalWrite(blue_led_pin, LOW);  
+}
+
+void lightYellowLed(){
+      digitalWrite(red_led_pin, LOW);  
+      digitalWrite(yellow_led_pin, HIGH);  
+      digitalWrite(blue_led_pin, LOW);  
+}
+
+void lightBlueLed(){
+      digitalWrite(red_led_pin, LOW);  
+      digitalWrite(yellow_led_pin, LOW);  
+      digitalWrite(blue_led_pin, HIGH);  
 }
 
 ISR(TIMER2_OVF_vect)
