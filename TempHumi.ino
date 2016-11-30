@@ -25,15 +25,18 @@ int current_quality =-1;
 int air_quality_value = 0;
 
 //Dust Sensor
-unsigned long duration;
-unsigned long starttime;
-unsigned long endtime;
-unsigned const long sampletime_ms = 30000;//sampe 30s ;
-unsigned long lowpulseoccupancy = 0;
-float ratio = 0;
+unsigned long durationPM10;
+unsigned long durationPM25;
+unsigned const long sampletime_ms = 30000;//sample 30s ;
+unsigned long lowpulseoccupancyPM10 = 0;
+unsigned long lowpulseoccupancyPM25 = 0;
 long concentrationPM_1_0 = 0;
 long concentrationPM_2_5 = 0;
-
+unsigned long cumulatedDurationPM10;
+unsigned long cumulatedDurationPM25;
+unsigned const short BuffSize= 9; 
+char buf[BuffSize];
+   
 //LEDS
 #define red_led_pin 3
 #define yellow_led_pin 5 
@@ -41,7 +44,6 @@ long concentrationPM_2_5 = 0;
 
 //Display
 U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0|U8G_I2C_OPT_NO_ACK|U8G_I2C_OPT_FAST);  
-const int BuffSize= 9; 
 
 void setup() {
   
@@ -104,8 +106,15 @@ void getAirQuality(){
 
 void getDustDectector(){
   // Checking Dust Sensor
-  concentrationPM_1_0 = (long)getPM(PM10_PIN);
-  concentrationPM_2_5 = (long)getPM(PM25_PIN);
+  long newPM10Value = getPM10(2500);
+  if(newPM10Value>0){
+      concentrationPM_1_0 = newPM10Value;
+  }
+   
+  long newPM25Value = getPM25(2500);
+  if(newPM25Value>0){
+      concentrationPM_2_5 = newPM25Value;
+  }
 }
 
 void blinkLeds(){
@@ -152,7 +161,6 @@ void lightBlueLed(){
 }
 
 void displayTempHum(){
-   char buf[BuffSize];
   
    u8g.firstPage();  
   do {
@@ -175,14 +183,13 @@ void displayTempHum(){
       u8g.setFont(u8g_font_profont15);
       index += u8g.drawStr( index, 24, "Ressentie: ");
       index = 0;
-      u8g.setFont(u8g_font_profont22);
+      u8g.setFont(u8g_font_profont15);
       index += u8g.drawStr( index, 52, dtostrf(tempRes, 5, 1, buf));
       index += u8g.drawStr( index, 52, "\260C");
   } while( u8g.nextPage() );
 }
 
 void displayAirQuality(){
-   char buf[BuffSize];
   String str;
   
    u8g.firstPage();  
@@ -211,26 +218,20 @@ void displayAirQuality(){
       u8g.setFont(u8g_font_profont12);
       index += u8g.drawStr( index, 21, "Conc.Particules: ");
 
-      float ppmv=getPPMV(concentrationPM_1_0);
+      float ppmv=pcs2ugm3(concentrationPM_1_0);
       drawPMValue(32, buf, str, "PM>1.0: ",ppmv);
       
-      ppmv=getPPMV(concentrationPM_2_5);
+      ppmv=pcs2ugm3(concentrationPM_2_5);
       drawPMValue(43, buf, str, "PM>2.5: ",ppmv);
 
-      long under2_5 = concentrationPM_1_0 - concentrationPM_2_5;
-      ppmv=getPPMV(under2_5);
-
-      Serial.print(concentrationPM_1_0);
-      Serial.print("/");
-      Serial.print(concentrationPM_2_5);
-      Serial.print("/");
-      Serial.println(under2_5);
+      long under2_5 = concentrationPM_2_5 - concentrationPM_1_0;
+      ppmv=pcs2ugm3(under2_5);
       
       drawPMValue(54, buf, str, "PM2.5: ",ppmv);
       
   } while( u8g.nextPage() );
 
-  delay(20000);
+  delay(5000);
 }
 
 void drawPMValue(int pos_y, char buf[], String str, char *labelPM, float ppmv){
@@ -242,28 +243,74 @@ void drawPMValue(int pos_y, char buf[], String str, char *labelPM, float ppmv){
       index += u8g.drawStr( index, pos_y, "mg/m3 ");
 }
 
-long getPM(int DUST_SENSOR_DIGITAL_PIN) {
-
-  starttime = millis();
-
-  while (1) {
-  
-    duration = pulseIn(DUST_SENSOR_DIGITAL_PIN, LOW);
-    lowpulseoccupancy += duration;
-    endtime = millis();
-    
-    if ((endtime-starttime) > sampletime_ms)
-    {
-    ratio = (lowpulseoccupancy-endtime+starttime)/(sampletime_ms*10.0);  // Integer percentage 0=>100
-    long concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve
-    lowpulseoccupancy = 0;
-    return(concentration);    
+long getPM10(long maxDurationMS){
+    long starttime = millis();
+    while(1){
+      durationPM10 = pulseIn(PM10_PIN, LOW);
+      lowpulseoccupancyPM10 += durationPM10;
+       long endtime = millis();
+       cumulatedDurationPM10+= endtime-starttime;
+       if(cumulatedDurationPM10>sampletime_ms){
+            float ratio = (lowpulseoccupancyPM10)/(cumulatedDurationPM10*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
+            long concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+            lowpulseoccupancyPM10 = 0;
+            cumulatedDurationPM10 = 0;
+            Serial.print("PM10: ");
+            Serial.print(ratio);
+            Serial.print(" / ");
+            Serial.print(concentration);
+            Serial.println(" pcs/0.01cf");
+            return(concentration);    
+       }else if(endtime-starttime>maxDurationMS){
+          //Si on a déjà passé 2,5 secondes à accumuler on suspend le calcul
+          return (0);
+       }
     }
-  }  
 }
 
-float getPPMV(long concentration){
-  return (((concentration*0.0283168/100) *  (0.08205*temp)/0.01))/1000;
+long getPM25(long maxDurationMS){
+    long starttime = millis();
+    while(1){
+      durationPM25 = pulseIn(PM25_PIN, LOW);
+      lowpulseoccupancyPM25 += durationPM25;
+       long endtime = millis();
+       cumulatedDurationPM25+= endtime-starttime;
+       if(cumulatedDurationPM25>sampletime_ms){
+            float ratio = (lowpulseoccupancyPM25)/(cumulatedDurationPM25*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
+            long concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+            lowpulseoccupancyPM25 = 0;
+            cumulatedDurationPM25 = 0;
+            Serial.print("PM25: ");
+            Serial.print(ratio);
+            Serial.print(" / ");
+            Serial.print(concentration);
+            Serial.println(" pcs/0.01cf");
+            return(concentration);    
+       }else if(endtime-starttime>maxDurationMS){
+          //Si on a déjà passé 2,5 secondes à accumuler on suspend le calcul
+          return (0);
+       }
+    }
+}
+
+//Quelle formule est bonne entre getPPVM et pcs2ugm3?
+//float getPPMV(long concentration){
+//  return (((concentration*0.0283168/100) *  (0.08205*temp)/0.01))/1000;
+//}
+
+//https://github.com/intel-iot-devkit/upm/pull/409/files
+double pcs2ugm3 (double concentration_pcs)
+{
+    double pi = 3.14159;
+    // All particles are spherical, with a density of 1.65E12 µg/m3
+    double density = 1.65 * pow (10, 12);
+    // The radius of a particle in the PM2.5 channel is .44 µm
+    double r25 = 0.44 * pow (10, -6);
+    double vol25 = (4/3) * pi * pow (r25, 3);
+    double mass25 = density * vol25; // ug
+    double K = 3531.5; // per m^3 
+
+    return concentration_pcs * K * mass25;
 }
 
 
