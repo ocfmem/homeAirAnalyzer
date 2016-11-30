@@ -27,7 +27,7 @@ int air_quality_value = 0;
 //Dust Sensor
 unsigned long durationPM10;
 unsigned long durationPM25;
-unsigned const long sampletime_ms = 30000;//sample 30s ;
+unsigned const long sampletime_ms = 60000;//sample 60s ;
 unsigned long lowpulseoccupancyPM10 = 0;
 unsigned long lowpulseoccupancyPM25 = 0;
 long concentrationPM_1_0 = 0;
@@ -106,15 +106,7 @@ void getAirQuality(){
 
 void getDustDectector(){
   // Checking Dust Sensor
-  long newPM10Value = getPM10(2500);
-  if(newPM10Value>0){
-      concentrationPM_1_0 = newPM10Value;
-  }
-   
-  long newPM25Value = getPM25(2500);
-  if(newPM25Value>0){
-      concentrationPM_2_5 = newPM25Value;
-  }
+  getPMs(2500);
 }
 
 void blinkLeds(){
@@ -218,16 +210,13 @@ void displayAirQuality(){
       u8g.setFont(u8g_font_profont12);
       index += u8g.drawStr( index, 21, "Conc.Particules: ");
 
-      float ppmv=pcs2ugm3(concentrationPM_1_0);
-      drawPMValue(32, buf, str, "PM>1.0: ",ppmv);
+      float ppmvPM10=pcs2ugm3(concentrationPM_1_0);
+      drawPMValue(32, buf, str, "PM>1.0: ",ppmvPM10);
       
-      ppmv=pcs2ugm3(concentrationPM_2_5);
-      drawPMValue(43, buf, str, "PM>2.5: ",ppmv);
-
-      long under2_5 = concentrationPM_2_5 - concentrationPM_1_0;
-      ppmv=pcs2ugm3(under2_5);
+      float ppmvPM25=pcs2ugm3(concentrationPM_2_5);
+      drawPMValue(43, buf, str, "PM>2.5: ",ppmvPM25);
       
-      drawPMValue(54, buf, str, "PM2.5: ",ppmv);
+      drawPMValue(54, buf, str, "PM2.5: ",ppmvPM10 - ppmvPM25);
       
   } while( u8g.nextPage() );
 
@@ -243,50 +232,56 @@ void drawPMValue(int pos_y, char buf[], String str, char *labelPM, float ppmv){
       index += u8g.drawStr( index, pos_y, "mg/m3 ");
 }
 
-long getPM10(long maxDurationMS){
+void getPMs(long maxDurationMS){
+  cumulateLowOccupancyPM10(maxDurationMS);
+  cumulateLowOccupancyPM25(maxDurationMS);
+  if(cumulatedDurationPM10>sampletime_ms
+      && cumulatedDurationPM25>sampletime_ms){
+      float ratio = (lowpulseoccupancyPM10)/(cumulatedDurationPM10*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
+      concentrationPM_1_0 = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      lowpulseoccupancyPM10 = 0;
+      cumulatedDurationPM10 = 0;
+//      Serial.print("PM10: ");
+//      Serial.print(ratio);
+//      Serial.print(" / ");
+//      Serial.print(concentrationPM_1_0);
+//      Serial.println(" pcs/0.01cf");
+
+      ratio = (lowpulseoccupancyPM25)/(cumulatedDurationPM25*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
+      concentrationPM_2_5 = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      lowpulseoccupancyPM25 = 0;
+      cumulatedDurationPM25 = 0;
+//      Serial.print("PM25: ");
+//      Serial.print(ratio);
+//      Serial.print(" / ");
+//      Serial.print(concentrationPM_2_5);
+//      Serial.println(" pcs/0.01cf");
+  }         
+}
+
+
+void cumulateLowOccupancyPM10(long maxDurationMS){
     long starttime = millis();
     while(1){
       durationPM10 = pulseIn(PM10_PIN, LOW);
       lowpulseoccupancyPM10 += durationPM10;
        long endtime = millis();
        cumulatedDurationPM10+= endtime-starttime;
-       if(cumulatedDurationPM10>sampletime_ms){
-            float ratio = (lowpulseoccupancyPM10)/(cumulatedDurationPM10*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
-            long concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
-            lowpulseoccupancyPM10 = 0;
-            cumulatedDurationPM10 = 0;
-            Serial.print("PM10: ");
-            Serial.print(ratio);
-            Serial.print(" / ");
-            Serial.print(concentration);
-            Serial.println(" pcs/0.01cf");
-            return(concentration);    
-       }else if(endtime-starttime>maxDurationMS){
+       if(endtime-starttime>maxDurationMS){
           //Si on a déjà passé 2,5 secondes à accumuler on suspend le calcul
           return (0);
        }
     }
 }
 
-long getPM25(long maxDurationMS){
+void cumulateLowOccupancyPM25(long maxDurationMS){
     long starttime = millis();
     while(1){
       durationPM25 = pulseIn(PM25_PIN, LOW);
       lowpulseoccupancyPM25 += durationPM25;
        long endtime = millis();
        cumulatedDurationPM25+= endtime-starttime;
-       if(cumulatedDurationPM25>sampletime_ms){
-            float ratio = (lowpulseoccupancyPM25)/(cumulatedDurationPM25*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
-            long concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
-            lowpulseoccupancyPM25 = 0;
-            cumulatedDurationPM25 = 0;
-            Serial.print("PM25: ");
-            Serial.print(ratio);
-            Serial.print(" / ");
-            Serial.print(concentration);
-            Serial.println(" pcs/0.01cf");
-            return(concentration);    
-       }else if(endtime-starttime>maxDurationMS){
+       if(endtime-starttime>maxDurationMS){
           //Si on a déjà passé 2,5 secondes à accumuler on suspend le calcul
           return (0);
        }
