@@ -1,3 +1,4 @@
+#include <SoftwareSerial.h>
 #include <AirQuality.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
@@ -11,13 +12,13 @@
 #define PM25_PIN 9
 
 // Uncomment whatever type you're using!
-#define DHTTYPE DHT11   // DHT 11
-//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT11   // DHT 11
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 //#define DHTTYPE DHT21   // DHT 21 (AM2301)
 DHT dht(DHTPIN, DHTTYPE);
-float tempRes = 0;
-float temp = 0;
-float hum = 0;
+double tempRes = 0;
+double temp = 0;
+double hum = 0;
 
 //Air Quality
 AirQuality airqualitysensor;
@@ -30,10 +31,10 @@ unsigned long durationPM25;
 unsigned const long sampletime_ms = 60000;//sample 60s ;
 unsigned long lowpulseoccupancyPM10 = 0;
 unsigned long lowpulseoccupancyPM25 = 0;
-long concentrationPM_1_0 = 0;
-long concentrationPM_2_5 = 0;
 unsigned long cumulatedDurationPM10;
 unsigned long cumulatedDurationPM25;
+double ppmvPM10 = 0;
+double ppmvPM25 = 0;
 unsigned const short BuffSize= 9; 
 char buf[BuffSize];
    
@@ -45,14 +46,27 @@ char buf[BuffSize];
 //Display
 U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0|U8G_I2C_OPT_NO_ACK|U8G_I2C_OPT_FAST);  
 
+// ESP8266 rx, tx
+SoftwareSerial esp8266(10, 11);
+const String apiKey = "";
+const String AP = "OCF";
+const String AP_PASSWORD = "";
+unsigned const long upload_every_ms = 120000;//Envoie des données toutes les 10 mins
+unsigned long lastDataUpload = 0;
+unsigned long elapsedSinceLastUpload = 0;
+
 void setup() {
-  
+    
   u8g.firstPage(); 
   do {  
     u8g.setFont(u8g_font_profont15);
     u8g.drawStr(0,14, "Init...");  
   } while( u8g.nextPage() ); 
-     
+      
+  //connection to ESP8266
+  esp8266.begin(115200);
+  esp8266.setTimeout(2000);
+       
   Serial.begin(9600);
   Serial.println("Starting");
 
@@ -66,8 +80,16 @@ void setup() {
   pinMode(red_led_pin,OUTPUT);
   pinMode(yellow_led_pin,OUTPUT);
   pinMode(blue_led_pin,OUTPUT);
- 
+
+ // enable wifi ??? Utile ???
+//    pinMode(13, OUTPUT);
+//    digitalWrite(13, HIGH);
+//    delay(1000);
+
+  resetESP8266();
+  
   delay(2000);
+  lastDataUpload = millis();
 }
 
 void loop() {
@@ -78,6 +100,24 @@ void loop() {
   getDustDectector(); //prend 1 minute :/
   blinkLeds();
   displayAirQuality();
+
+  long now = millis();
+  elapsedSinceLastUpload += now - lastDataUpload;
+  if(elapsedSinceLastUpload>upload_every_ms){
+    //Serial.println("UpdateRequested");
+    elapsedSinceLastUpload -= upload_every_ms;
+    lastDataUpload = now;
+    //send Data
+    if (check()) {
+        resetESP8266();  
+        connectWifi(AP, AP_PASSWORD);
+        delay(10000);
+        //postData(23.4,40,22,0.65,0.33);
+        postToThingSpeak(temp,hum,tempRes,ppmvPM10,ppmvPM25, current_quality, air_quality_value);
+        esp8266.println("AT+CWQAP");
+     } 
+  }
+  
 }
 
 //Valeur du capteur de température et humidité.
@@ -95,6 +135,11 @@ void getDHTValues(){
   // Compute heat(chaleur ressentie) index in Celsius (isFahreheit = false)
   float hic = dht.computeHeatIndex(t, h, false);
   tempRes = hic;
+  //Serial.print(hum);
+  //Serial.print(" / ");
+  //Serial.print(t);
+  //Serial.print(" / ");
+  //Serial.println(tempRes);
 
 }  
 
@@ -209,13 +254,8 @@ void displayAirQuality(){
       index = 0;
       u8g.setFont(u8g_font_profont12);
       index += u8g.drawStr( index, 21, "Conc.Particules: ");
-
-      float ppmvPM10=pcs2ugm3(concentrationPM_1_0);
       drawPMValue(32, buf, str, "PM>1.0: ",ppmvPM10);
-      
-      float ppmvPM25=pcs2ugm3(concentrationPM_2_5);
       drawPMValue(43, buf, str, "PM>2.5: ",ppmvPM25);
-      
       drawPMValue(54, buf, str, "PM2.5: ",ppmvPM10 - ppmvPM25);
       
   } while( u8g.nextPage() );
@@ -238,24 +278,26 @@ void getPMs(long maxDurationMS){
   if(cumulatedDurationPM10>sampletime_ms
       && cumulatedDurationPM25>sampletime_ms){
       float ratio = (lowpulseoccupancyPM10)/(cumulatedDurationPM10*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
-      concentrationPM_1_0 = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      float concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      ppmvPM10=pcs2ugm3(concentration);
       lowpulseoccupancyPM10 = 0;
       cumulatedDurationPM10 = 0;
-//      Serial.print("PM10: ");
-//      Serial.print(ratio);
-//      Serial.print(" / ");
-//      Serial.print(concentrationPM_1_0);
-//      Serial.println(" pcs/0.01cf");
+      //Serial.print("PM10: ");
+      //Serial.print(ratio);
+      //Serial.print(" / ");
+      //Serial.print(concentration);
+      //Serial.println(" pcs/0.01cf");
 
       ratio = (lowpulseoccupancyPM25)/(cumulatedDurationPM25*10.0);  // Calcul du ratio:Temps en mode LOW sur toute la durée. pulseIn retourne la valeur en microseconds.
-      concentrationPM_2_5 = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      concentration = 1.1*pow(ratio,3)-3.8*pow(ratio,2)+520*ratio+0.62; // using spec sheet curve in pcs/0.01cf
+      ppmvPM25=pcs2ugm3(concentration);
       lowpulseoccupancyPM25 = 0;
       cumulatedDurationPM25 = 0;
-//      Serial.print("PM25: ");
-//      Serial.print(ratio);
-//      Serial.print(" / ");
-//      Serial.print(concentrationPM_2_5);
-//      Serial.println(" pcs/0.01cf");
+      //Serial.print("PM25: ");
+      //Serial.print(ratio);
+      //Serial.print(" / ");
+      //Serial.print(concentration);
+      //Serial.println(" pcs/0.01cf");
   }         
 }
 
@@ -308,7 +350,107 @@ double pcs2ugm3 (double concentration_pcs)
     return concentration_pcs * K * mass25;
 }
 
+//void postData(double temp, double hum, double tr, double pm10, double pm25){
+//    String response="";
+//    String data = 
+//      "{\"temp\":" + String(temp) + "," +
+//      "\"hum\":" + String(hum) + "," +
+//      "\"tr\":" + String(tr) + "," +
+//      "\"pm10\":" + String(pm10) + "," +
+//      "\"pm25\":" + String(pm25) +"}"; 
+//    httpPOST(data, "192.168.0.15", 3000, "/homeData", &response);
+//}
 
+void postToThingSpeak(double temp, double hum, double tr, double pm10, double pm25, int airQuality, int airQualityValue){
+  double diff = pm10 - pm25;
+   String getStr = "GET /update?api_key=";
+    getStr += apiKey;
+    getStr +="&field1=";
+    getStr += String(temp);
+    getStr +="&field2=";
+    getStr += String(hum);
+    getStr +="&field3=";
+    getStr += String(tr);
+    getStr +="&field4=";
+    getStr += String(pm10);
+    getStr +="&field5=";
+    getStr += String(pm25);
+    getStr +="&field6=";
+    getStr += String(diff);
+    getStr +="&field7=";
+    getStr += String(airQuality);
+    getStr +="&field8=";
+    getStr += String(airQualityValue);
+    getStr += "\r\n\r\n";
+
+  String cmd = "AT+CIPSTART=\"TCP\",\"";
+  cmd += "api.thingspeak.com"; // api.thingspeak.com
+  cmd += "\",80";
+  esp8266.println(cmd);
+  if(esp8266.find("Error")){
+    Serial.println("AT+CIPSTART error");
+    return;
+  }
+
+  // send data length
+  cmd = "AT+CIPSEND=";
+  cmd += String(getStr.length());
+  esp8266.println(cmd);
+
+  if(esp8266.find(">")){
+    esp8266.print(getStr);
+  }
+  else{
+    esp8266.println("AT+CIPCLOSE");
+    // alert user
+    Serial.println("AT+CIPCLOSE");
+  }
+  
+}
+
+//ESP8266
+boolean check() {
+    esp8266.println("AT");
+    Serial.println("checking..");
+    boolean ok = false;
+    if (esp8266.find("OK")) {
+        Serial.println("ESP8266 available");
+        ok = true;
+    }else{
+      Serial.println("Check Failed");
+    }
+    return ok;
+}
+
+void resetESP8266() {
+    // reset ESP8266
+    esp8266.println("AT+RST");
+    //esp8266.println("AT+CIOBAUD=9600");
+    delay(500);
+    // set station mode
+    esp8266.println("AT+CWMODE=1");
+    delay(200);
+    // set single connection mode
+    esp8266.println("AT+CIPMUX=0");
+    Serial.println("resetESP8266()");
+    delay(200);
+}
+
+boolean connectWifi(String ssid, String password) {
+    String cmd = "AT+CWJAP=\"" + ssid + "\",\"" + password + "\"";
+    Serial.println(cmd);
+    esp8266.println(cmd);
+    if(esp8266.find("OK")) {
+        Serial.println("Connected!");
+        return true;
+    }
+    else {
+        Serial.println("Cannot connect to wifi");
+        return false;
+    }
+}
+
+//Interrupd qualité de l'air
 ISR(TIMER2_OVF_vect)
 {
   if(airqualitysensor.counter==122)//set 2 seconds as a detected duty
